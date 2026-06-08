@@ -3,38 +3,132 @@ import mediapipe as mp
 import pyautogui
 import numpy as np
 import math 
+import json
+import random
 
-# Impostazioni di calibrazione e filtri
+#functions
+
+def confronta_pose(punti_json, punti_webcam, tipo_mano="Right", soglia_tolleranza=0.4):
+    if not punti_json:
+        return False, 999.0
+    diz_json = {p["id"]: p for p in punti_json}
+    diz_webcam = {p["id"]: p for p in punti_webcam}
+    
+    errore_totale = 0.0
+
+    for i in range(21):
+        pt_j = diz_json[i]
+        pt_w = diz_webcam[i]
+        x_webcam = pt_w["x"]
+        if tipo_mano == "Left":
+            x_webcam = -x_webcam
+
+        distanza = math.sqrt((pt_j["x"] - x_webcam)**2 + (pt_j["y"] - pt_w["y"])**2)
+        errore_totale += distanza
+
+    errore_medio = errore_totale / 21
+    gesto_uguale = errore_medio < soglia_tolleranza
+    
+    return gesto_uguale, errore_medio
+
+def WorldBearer(durata_frame=20):
+    screenshot = pyautogui.screenshot()
+    schermo_base = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+
+    nome_finestra = "WorldBearing"
+    cv2.namedWindow(nome_finestra, cv2.WND_PROP_FULLSCREEN)
+    cv2.setWindowProperty(nome_finestra, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+    
+    (testo_w, testo_h), _ = cv2.getTextSize("Prepare for destruction", cv2.FONT_HERSHEY_SIMPLEX, 1, 2)
+    testo_x = (larghezzaSchermo - testo_w) / 2
+    testo_y = (altezzaSchermo + testo_h) / 2
+    cv2.putText(schermo_base, "Prepare for destruction", (int(testo_x), int(testo_y)), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+    
+    for f in range(durata_frame):
+        overlay = schermo_base.copy()
+        num_cubi = random.randint(3, 8) + (f // 2)
+        
+        for _ in range(num_cubi):
+            w = random.randint(40, 150)
+            x = random.randint(0, larghezzaSchermo - w)
+            y = random.randint(0, altezzaSchermo - w)
+            
+            colore = (0, 0, random.randint(100, 160)) if random.random() < 0.6 else (10, 20, random.randint(200, 255))
+            
+            cv2.rectangle(overlay, (x, y), (x + w, y + w), colore, cv2.FILLED)
+            cv2.rectangle(overlay, (x, y), (x + w, y + w), (0, 0, 0), 1)
+
+        cv2.addWeighted(overlay, 0.6, schermo_base, 0.4, 0, schermo_base)
+        cv2.imshow(nome_finestra, schermo_base)
+        
+        if cv2.waitKey(30) & 0xFF == ord('s'):
+            break
+            
+    cv2.destroyWindow(nome_finestra)
+
+def Remembrance(durata_frame=20):
+    nomeF = "Freeze"
+    cv2.namedWindow(nomeF, cv2.WND_PROP_FULLSCREEN)
+    cv2.setWindowProperty(nomeF, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+
+    cv2.waitKey(5)
+    screen = pyautogui.screenshot()
+    sb = cv2.cvtColor(np.array(screen), cv2.COLOR_RGB2BGR)
+    
+    b_base, g_base, r_base = cv2.split(sb)
+    
+    for f in range(durata_frame):
+        fattore_b = f * 5
+        fattore_r = int(f / 5)
+        
+        b = cv2.add(b_base, fattore_b)
+        r = cv2.add(r_base, fattore_r)
+        
+        freezato = cv2.merge([b, g_base, r])
+        cv2.imshow(nomeF, freezato)
+        
+        if cv2.waitKey(30) & 0xFF == ord('s'):
+            break
+            
+    cv2.destroyWindow(nomeF)
+
+#Variable
+
 offsetFiltro = 100
 isDragging = False
 scrollingAttivo = False
 cliccato = False
 xVecchia, yVecchia = 0, 0
 frenoMovimento = 0.8
-
-# Evita il blocco di sicurezza se il cursore tocca i bordi dello schermo
+nome_file = "posa_mano_pura.json"
 pyautogui.FAILSAFE = False
 pyautogui.PAUSE = 0
 
-# Ottiene le dimensioni reali dello schermo
 larghezzaSchermo, altezzaSchermo = pyautogui.size()
 
-# Inizializzazione dei moduli di MediaPipe per il tracciamento della mano
 mpHands = mp.solutions.hands
 mpDrawing = mp.solutions.drawing_utils
 
-# Configurazione del modello (ottimizzato per 1 sola mano nel flusso video)
+#Json opening
+try:
+    with open(nome_file, "r") as file_json:
+        punti_json = json.load(file_json)
+except FileNotFoundError:
+    print(f"Errore: Il file '{nome_file}' non esiste ancora. Devi prima eseguire lo script che lo crea!")
+    exit()
+
+#hands settings
 hands = mpHands.Hands(
-    static_image_mode=False,
+    static_image_mode=True,
     max_num_hands=1,
     min_detection_confidence=0.7,
     min_tracking_confidence=0.7
 )
-
-# Avvia l'acquisizione della webcam predefinita
+#0 defines the webcam
 cap = cv2.VideoCapture(0)
-
 print("Premi 'q' per uscire dal programma.")
+
+#getting the frame and tracking the hand
 
 while cap.isOpened():
     success, frame = cap.read()
@@ -42,41 +136,39 @@ while cap.isOpened():
         print("Impossibile ricevere il frame dalla webcam. In uscita...")
         break
 
-    # Specchia l'immagine orizzontalmente per un effetto specchio naturale
     frame = cv2.flip(frame, 1)
     altezzaFrame, larghezzaFrame, canaliFrame = frame.shape
 
-    # Conversione colore da BGR (OpenCV) a RGB (MediaPipe)
     rgbFrame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     results = hands.process(rgbFrame)
 
-    # BLOCCO 1: Disegno dello scheletro della mano sul frame
+    stato_corrente = "Idle"
+
     if results.multi_hand_landmarks:
         for handLandmarks in results.multi_hand_landmarks:
             mpDrawing.draw_landmarks(
                 frame, 
                 handLandmarks, 
                 mpHands.HAND_CONNECTIONS,
-                mpDrawing.DrawingSpec(color=(0, 255, 0), thickness=2, circle_radius=4), # Punti verdi
-                mpDrawing.DrawingSpec(color=(0, 0, 255), thickness=2)                 # Linee rosse
+                mpDrawing.DrawingSpec(color=(0, 255, 0), thickness=2, circle_radius=4), 
+                mpDrawing.DrawingSpec(color=(0, 0, 255), thickness=2)                 
             )
+#main check for the hand and the corellation with the signs
+    if results.multi_hand_landmarks and results.multi_handedness:
+        for handLandmarks, handedness in zip(results.multi_hand_landmarks, results.multi_handedness):
+            
+            tipo_mano = handedness.classification[0].label
 
-    # BLOCCO 2: Calcolo delle gesture e interazione con il sistema
-    if results.multi_hand_landmarks:
-        for handLandmarks in results.multi_hand_landmarks:
-            # Estrazione dei Landmark chiave (Punte delle dita)
             puntaPollice = handLandmarks.landmark[4]
             puntaIndice = handLandmarks.landmark[8]
             puntaMedio = handLandmarks.landmark[12]
             puntaAnnullare = handLandmarks.landmark[16]
 
-            # Conversione delle coordinate normalizzate (0.0 - 1.0) in pixel sul frame
             px, py = int(puntaPollice.x * larghezzaFrame), int(puntaPollice.y * altezzaFrame)
             cx, cy = int(puntaIndice.x * larghezzaFrame), int(puntaIndice.y * altezzaFrame)
             mx, my = int(puntaMedio.x * larghezzaFrame), int(puntaMedio.y * altezzaFrame)
             ax, ay = int(puntaAnnullare.x * larghezzaFrame), int(puntaAnnullare.y * altezzaFrame)
 
-            # Mappatura dello spazio di movimento e stabilizzazione del cursore (Filtro)
             xFinale = float(np.interp(cx, (offsetFiltro, larghezzaFrame - offsetFiltro), (0, larghezzaSchermo)))
             yFinale = float(np.interp(cy, (offsetFiltro, altezzaFrame - offsetFiltro), (0, altezzaSchermo)))
             
@@ -87,60 +179,79 @@ while cap.isOpened():
             targetY = int(yStabilizzato)
 
             cv2.circle(frame, (cx, cy), 10, (255, 0, 0), cv2.FILLED)
+            
+            polso = handLandmarks.landmark[0]
+            x_polso, y_polso, z_polso = polso.x, polso.y, polso.z
+            
+            base_medio = handLandmarks.landmark[9]
+            lunghezza_palmo = math.sqrt((base_medio.x - x_polso)**2 + (base_medio.y - y_polso)**2)
+            
+            datiMano = []
+            for id_punto, landmark in enumerate(handLandmarks.landmark):
+                puntoPerLista = {
+                    "id" : id_punto,
+                    "x" : (landmark.x - x_polso) / lunghezza_palmo,
+                    "y" : (landmark.y - y_polso) / lunghezza_palmo,
+                    "z" : (landmark.z - z_polso) / lunghezza_palmo,
+                }
+                datiMano.append(puntoPerLista)
+            
+            gs, erroreMedio = confronta_pose(punti_json, datiMano, tipo_mano=tipo_mano, soglia_tolleranza=0.4)
+            if gs:
+                if tipo_mano == "Right":
+                    WorldBearer(durata_frame=20)
+                elif tipo_mano == "Left":
+                    Remembrance(durata_frame=20)
 
-            # --- GESTURE 1: CLICK SINISTRO (Distanza Pollice - Medio) ---
             distanzaClick = math.hypot(px - mx, py - my)
             if distanzaClick < 30:
                 if not cliccato:
                     pyautogui.click()
                     cliccato = True  
-                    cv2.putText(frame, "Click", (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                stato_corrente = "Click"
             else:
                 cliccato = False
 
-            # --- GESTURE 2: SCROLLING (Differenza Asse Y tra Medio e Indice) ---
             differenzaY = my - cy
             if differenzaY > 40: 
                 scrollingAttivo = True 
-                pyautogui.scroll(-10) # Ruota la rotellina in giù
-                cv2.putText(frame, "Down", (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                pyautogui.scroll(-10) 
+                stato_corrente = "Scroll Down"
             elif differenzaY < -40:  
-                pyautogui.scroll(10)  # Ruota la rotellina in su
+                pyautogui.scroll(10)  
                 scrollingAttivo = True 
-                cv2.putText(frame, "Up", (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                stato_corrente = "Scroll Up"
             else:
                 scrollingAttivo = False
 
-            # --- GESTURE 3: TRASCINAMENTO FINESTRE O MOVIMENTO (Esclusione logica) ---
-            distanzaDrag = math.hypot(ax - px, ay - py) # Distanza Annullare - Pollice
+            distanzaDrag = math.hypot(ax - px, ay - py) 
             
             if distanzaDrag < 35: 
                 if not isDragging:
-                    pyautogui.mouseDown(button='left') # Aggancia l'elemento/finestra
+                    pyautogui.mouseDown(button='left') 
                     isDragging = True
-                cv2.putText(frame, "DRAG", (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                stato_corrente = "DRAG"
                 pyautogui.moveTo(targetX, targetY)
             else:
                 if isDragging:
-                    pyautogui.mouseUp(button='left') # Rilascia l'elemento/finestra
+                    pyautogui.mouseUp(button='left') 
                     isDragging = False
                 
-                # Muove il puntatore solo se non sono in corso scroll o click statici
                 if not scrollingAttivo and not cliccato:
                     pyautogui.moveTo(targetX, targetY)
 
-            # Aggiornamento storico posizioni per il frame successivo
             xVecchia, yVecchia = xStabilizzato, yStabilizzato
 
-    # Rendering grafico della finestra video (Fuori dai loop di scansione)
+            cv2.putText(frame, stato_corrente, (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
     cv2.imshow("finestra pazza", frame)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
-# Chiusura pulita delle risorse e reset periferiche hardware
 if isDragging:
     pyautogui.mouseUp(button='left')
 
+#releasing all
 cap.release()
 cv2.destroyAllWindows()
