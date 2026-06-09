@@ -5,8 +5,19 @@ import numpy as np
 import math 
 import json
 import random
+import sys
+import os
+
 
 #functions
+def resource_path(relative_path):
+    """ Ottieni il percorso assoluto della risorsa, compatibile con PyInstaller """
+    try:
+        # PyInstaller crea una cartella temporanea e memorizza il path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
 
 def confronta_pose(punti_json, punti_webcam, tipo_mano="Right", soglia_tolleranza=0.4):
     if not punti_json:
@@ -100,7 +111,8 @@ scrollingAttivo = False
 cliccato = False
 xVecchia, yVecchia = 0, 0
 frenoMovimento = 0.8
-nome_file = "posa_mano_pura.json"
+jaring = 30
+nome_file = resource_path("posa_mano_pura.json")
 pyautogui.FAILSAFE = False
 pyautogui.PAUSE = 0
 
@@ -143,7 +155,6 @@ while cap.isOpened():
     results = hands.process(rgbFrame)
 
     stato_corrente = "Idle"
-
     if results.multi_hand_landmarks:
         for handLandmarks in results.multi_hand_landmarks:
             mpDrawing.draw_landmarks(
@@ -153,6 +164,14 @@ while cap.isOpened():
                 mpDrawing.DrawingSpec(color=(0, 255, 0), thickness=2, circle_radius=4), 
                 mpDrawing.DrawingSpec(color=(0, 0, 255), thickness=2)                 
             )
+    else:
+        if isDragging:
+            isDragging = False
+            pyautogui.mouseUp(button="left")
+        cv2.imshow("finestra pazza",frame)
+        if cv2.waitKey(1) & 0xFF=='q':
+            break
+        continue
 #main check for the hand and the corellation with the signs
     if results.multi_hand_landmarks and results.multi_handedness:
         for handLandmarks, handedness in zip(results.multi_hand_landmarks, results.multi_handedness):
@@ -163,21 +182,62 @@ while cap.isOpened():
             puntaIndice = handLandmarks.landmark[8]
             puntaMedio = handLandmarks.landmark[12]
             puntaAnnullare = handLandmarks.landmark[16]
+            puntaMignolo = handLandmarks.landmark[20]
 
             px, py = int(puntaPollice.x * larghezzaFrame), int(puntaPollice.y * altezzaFrame)
             cx, cy = int(puntaIndice.x * larghezzaFrame), int(puntaIndice.y * altezzaFrame)
             mx, my = int(puntaMedio.x * larghezzaFrame), int(puntaMedio.y * altezzaFrame)
             ax, ay = int(puntaAnnullare.x * larghezzaFrame), int(puntaAnnullare.y * altezzaFrame)
-
+            mix, miy = int(puntaMignolo.x * larghezzaFrame), int(puntaMignolo.y * altezzaFrame)
             xFinale = float(np.interp(cx, (offsetFiltro, larghezzaFrame - offsetFiltro), (0, larghezzaSchermo)))
             yFinale = float(np.interp(cy, (offsetFiltro, altezzaFrame - offsetFiltro), (0, altezzaSchermo)))
             
             xStabilizzato = (xVecchia * frenoMovimento) + (xFinale * (1 - frenoMovimento))
             yStabilizzato = (yVecchia * frenoMovimento) + (yFinale * (1 - frenoMovimento))
             
-            targetX = int(xStabilizzato)
-            targetY = int(yStabilizzato)
+            curX, curY = pyautogui.position()
+            targetX, targetY = int(xStabilizzato), int(yStabilizzato)
+            delt = math.hypot(curX - targetX, curY - targetY)
 
+            # 1. Gestione Stato Drag & Click (Gerarchia delle azioni)
+            distanzaDrag = math.hypot(mix - px, miy - py) 
+            distanzaClick = math.hypot(px - mx, py - my) 
+
+            if distanzaDrag < 35:
+                if not isDragging:
+                    pyautogui.mouseDown(button='left')
+                    isDragging = True
+                stato_corrente = "DRAG"
+            else:
+                if isDragging:
+                    pyautogui.mouseUp(button='left')
+                    isDragging = False
+                
+                # Gestione Click (solo se non trasciniamo)
+                if distanzaClick < 30:
+                    if not cliccato:
+                        pyautogui.click()
+                        cliccato = True
+                    stato_corrente = "Click"
+                else:
+                    cliccato = False
+
+            # 2. Gestione Scroll
+            differenzaY = ay - cy
+            if abs(differenzaY) > 40: 
+                scrollingAttivo = True
+                pyautogui.scroll(10 if differenzaY < -40 else -10)
+                stato_corrente = "Scroll"
+            else:
+                scrollingAttivo = False
+
+            # 3. MOVIMENTO UNIFICATO (La Deadzone applicata qui)
+            # Si muove solo se non stiamo scrollando e se il movimento supera la soglia
+            if not scrollingAttivo and delt > jaring:
+                pyautogui.moveTo(targetX, targetY)
+
+            # Aggiornamento stato per il frame successivo
+            xVecchia, yVecchia = xStabilizzato, yStabilizzato
             cv2.circle(frame, (cx, cy), 10, (255, 0, 0), cv2.FILLED)
             
             polso = handLandmarks.landmark[0]
@@ -203,44 +263,6 @@ while cap.isOpened():
                 elif tipo_mano == "Left":
                     Remembrance(durata_frame=20)
 
-            distanzaClick = math.hypot(px - mx, py - my)
-            if distanzaClick < 30:
-                if not cliccato:
-                    pyautogui.click()
-                    cliccato = True  
-                stato_corrente = "Click"
-            else:
-                cliccato = False
-
-            differenzaY = my - cy
-            if differenzaY > 40: 
-                scrollingAttivo = True 
-                pyautogui.scroll(-10) 
-                stato_corrente = "Scroll Down"
-            elif differenzaY < -40:  
-                pyautogui.scroll(10)  
-                scrollingAttivo = True 
-                stato_corrente = "Scroll Up"
-            else:
-                scrollingAttivo = False
-
-            distanzaDrag = math.hypot(ax - px, ay - py) 
-            
-            if distanzaDrag < 35: 
-                if not isDragging:
-                    pyautogui.mouseDown(button='left') 
-                    isDragging = True
-                stato_corrente = "DRAG"
-                pyautogui.moveTo(targetX, targetY)
-            else:
-                if isDragging:
-                    pyautogui.mouseUp(button='left') 
-                    isDragging = False
-                
-                if not scrollingAttivo and not cliccato:
-                    pyautogui.moveTo(targetX, targetY)
-
-            xVecchia, yVecchia = xStabilizzato, yStabilizzato
 
             cv2.putText(frame, stato_corrente, (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 

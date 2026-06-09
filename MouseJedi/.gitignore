@@ -5,5 +5,5 @@ share/
 pyvenv.cfg
 **/__pycache__/
 *.pyc
-*.bat
+theforce.bat
 creating.py
